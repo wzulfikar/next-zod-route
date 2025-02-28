@@ -15,7 +15,7 @@ export type MiddlewareFn<TContext, TReturnType> = {
   (opts: { context: TContext; request: Request }): Promise<TReturnType>;
 };
 
-class InternalRouteHandlerError extends Error {}
+export class InternalRouteHandlerError extends Error {}
 
 export class RouteHandlerBuilder<
   TParams extends z.Schema = z.Schema,
@@ -121,7 +121,21 @@ export class RouteHandlerBuilder<
         const url = new URL(request.url);
         let params = context?.params ? await context.params : {};
         let query = Object.fromEntries(url.searchParams.entries());
-        let body = request.method !== 'GET' ? await request.json() : {};
+
+        // Support both JSON and FormData parsing
+        let body: unknown = {};
+        if (request.method !== 'GET' && request.method !== 'DELETE') {
+          const contentType = request.headers.get('content-type') || '';
+          if (
+            contentType.includes('multipart/form-data') ||
+            contentType.includes('application/x-www-form-urlencoded')
+          ) {
+            const formData = await request.formData();
+            body = Object.fromEntries(formData.entries());
+          } else {
+            body = await request.json();
+          }
+        }
 
         // Validate the params against the provided schema
         if (this.config.paramsSchema) {
@@ -173,7 +187,14 @@ export class RouteHandlerBuilder<
           body: body as z.infer<TBody>,
           data: middlewareContext,
         });
-        return result;
+
+        // If the result is already a Response, return it
+        if (result instanceof Response) {
+          return result;
+        }
+
+        // Otherwise, return a new Response with the result (else NextJS will throw an error and nothing will be returned)
+        return new Response(JSON.stringify(result), { status: 200, headers: { 'Content-Type': 'application/json' } });
       } catch (error) {
         if (error instanceof InternalRouteHandlerError) {
           return new Response(error.message, { status: 400 });

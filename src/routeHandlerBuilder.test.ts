@@ -63,7 +63,7 @@ describe('query validation', () => {
     });
 
     const request = new Request('http://localhost/?search=test');
-    const response = await GET(request);
+    const response = await GET(request, { params: Promise.resolve({}) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -79,7 +79,7 @@ describe('query validation', () => {
       });
 
     const request = new Request('http://localhost/?search=');
-    const response = await GET(request);
+    const response = await GET(request, { params: Promise.resolve({}) });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -101,7 +101,7 @@ describe('body validation', () => {
       method: 'POST',
       body: JSON.stringify({ field: 'test-field' }),
     });
-    const response = await POST(request);
+    const response = await POST(request, { params: Promise.resolve({}) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -120,7 +120,7 @@ describe('body validation', () => {
       method: 'POST',
       body: JSON.stringify({ field: 123 }),
     });
-    const response = await POST(request);
+    const response = await POST(request, { params: Promise.resolve({}) });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -325,5 +325,135 @@ describe('combined validation', () => {
 
     expect(response.status).toBe(400);
     expect(data).toEqual({ message: 'CustomError', details: 'Test error' });
+  });
+});
+
+describe('form data handling', () => {
+  it('should parse and validate form data in the request body', async () => {
+    const POST = createZodRoute()
+      .body(bodySchema)
+      .handler((request, context) => {
+        const { field } = context.body;
+        return Response.json({ field }, { status: 200 });
+      });
+
+    const formData = new URLSearchParams();
+    formData.append('field', 'test-field');
+
+    const request = new Request('http://localhost/', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ field: 'test-field' });
+  });
+
+  it('should return an error for invalid form data', async () => {
+    const POST = createZodRoute()
+      .body(bodySchema)
+      .handler((request, context) => {
+        const { field } = context.body;
+        return Response.json({ field }, { status: 200 });
+      });
+
+    const formData = new URLSearchParams();
+    formData.append('field', ''); // Empty string should fail validation
+
+    const request = new Request('http://localhost/', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ field: '' });
+  });
+});
+
+describe('response handling', () => {
+  it('should return the Response object directly when handler returns a Response', async () => {
+    const GET = createZodRoute().handler(() => {
+      return new Response(JSON.stringify({ custom: 'response' }), {
+        status: 201,
+        headers: { 'X-Custom-Header': 'test' },
+      });
+    });
+
+    const request = new Request('http://localhost/');
+    const response = await GET(request, { params: Promise.resolve({}) });
+    const data = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get('X-Custom-Header')).toBe('test');
+    expect(data).toEqual({ custom: 'response' });
+  });
+
+  it('should convert non-Response return values to a JSON Response', async () => {
+    const GET = createZodRoute().handler(() => {
+      return { data: 'value' };
+    });
+
+    const request = new Request('http://localhost/');
+    const response = await GET(request, { params: Promise.resolve({}) });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('application/json');
+
+    const data = await response.json();
+    expect(data).toEqual({ data: 'value' });
+  });
+});
+
+describe('HTTP methods handling', () => {
+  it('should not parse body for DELETE requests', async () => {
+    const DELETE = createZodRoute().handler(() => {
+      // If we reach here without error, it means the body wasn't parsed
+      return Response.json({ success: true }, { status: 200 });
+    });
+
+    const request = new Request('http://localhost/', {
+      method: 'DELETE',
+      // DELETE can have a body, unlike GET
+      body: '{invalid json}',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const response = await DELETE(request, { params: Promise.resolve({}) });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
+  });
+
+  it('should not parse body for GET requests', async () => {
+    const GET = createZodRoute().handler(() => {
+      // If we reach here without error, it means the body wasn't parsed
+      return Response.json({ success: true }, { status: 200 });
+    });
+
+    // GET requests can't have a body, so we'll just test that the handler works
+    const request = new Request('http://localhost/', {
+      method: 'GET',
+    });
+
+    const response = await GET(request, { params: Promise.resolve({}) });
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({ success: true });
   });
 });

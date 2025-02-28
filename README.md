@@ -1,6 +1,6 @@
 <h1 align="center">next-zod-route</h1>
 
-A fork from [next-safe-route](https://github.com/richardsolomou/next-safe-route) that uses [zod](https://github.com/colinhacks/zod) instead of [typeschema](https://github.com/typeschema/main).
+A fork from [next-safe-route](https://github.com/richardsolomou/next-safe-route) that uses [zod](https://github.com/colinhacks/zod) for schema validation.
 
 <p align="center">
   <a href="https://www.npmjs.com/package/next-zod-route"><img src="https://img.shields.io/npm/v/next-zod-route?style=for-the-badge&logo=npm" /></a>
@@ -15,16 +15,24 @@ A fork from [next-safe-route](https://github.com/richardsolomou/next-safe-route)
 - **✅ Schema Validation:** Automatically validates request parameters, query strings, and body content with built-in error handling.
 - **🧷 Type-Safe:** Works with full TypeScript type safety for parameters, query strings, and body content.
 - **😌 Easy to Use:** Simple and intuitive API that makes defining route handlers a breeze.
-- **🔗 Extensible:** Compatible with any validation library supported by [TypeSchema](https://typeschema.com).
+- **🔄 Flexible Response Handling:** Return Response objects directly or return plain objects that are automatically converted to JSON responses.
 - **🧪 Fully Tested:** Extensive test suite to ensure everything works reliably.
 
 ## Installation
 
 ```sh
-npm install next-zod-route
+npm install next-zod-route zod
 ```
 
-The library only works with [zod](https://zod.dev) for schema validation.
+Or using your preferred package manager:
+
+```sh
+pnpm add next-zod-route zod
+```
+
+```sh
+yarn add next-zod-route zod
+```
 
 ## Usage
 
@@ -48,6 +56,21 @@ const bodySchema = z.object({
 export const GET = createZodRoute()
   .params(paramsSchema)
   .query(querySchema)
+  .handler((request, context) => {
+    // Next.js passes params as a promise, but next-zod-route unwraps it for you
+    const { id } = context.params;
+    const { search } = context.query;
+
+    // Return a Response object directly
+    return Response.json({ id, search }), { status: 200 };
+
+    // Or return a plain object that will be converted to a JSON response
+    // return { id, search };
+  });
+
+export const POST = createZodRoute()
+  .params(paramsSchema)
+  .query(querySchema)
   .body(bodySchema)
   .handler((request, context) => {
     // Next.js 15 use promise, but with .params we already unwrap the promise for you
@@ -61,71 +84,117 @@ export const GET = createZodRoute()
 
 To define a route handler in Next.js:
 
-1. Import `createZodRoute` and your validation library (default, `zod`).
+1. Import `createZodRoute` and `zod`.
 2. Define validation schemas for params, query, and body as needed.
 3. Use `createZodRoute()` to create a route handler, chaining `params`, `query`, and `body` methods.
 4. Implement your handler function, accessing validated and type-safe params, query, and body through `context`.
+
+## Supported Body Formats
+
+`next-zod-route` supports multiple request body formats out of the box:
+
+- **JSON:** Automatically parses and validates JSON bodies.
+- **URL Encoded:** Supports `application/x-www-form-urlencoded` data.
+- **Multipart Form Data:** Supports `multipart/form-data`, enabling file uploads and complex form data parsing.
+
+The library automatically detects the content type and parses the body accordingly. For GET and DELETE requests, body parsing is skipped.
+
+## Response Handling
+
+You can return responses in two ways:
+
+1. **Return a Response object directly:**
+
+```ts
+return Response.json({ data: 'value' }, { status: 200 });
+```
+
+2. **Return a plain object** that will be automatically converted to a JSON response with status 200:
+
+```ts
+return { data: 'value' };
+```
 
 ## Advanced Usage
 
 ### Middleware
 
-You can add middleware to your route handler with the `use` method.
+You can add middleware to your route handler with the `use` method. Middleware functions can add data to the context that will be available in your handler.
 
 ```ts
-const safeRoute = createZodRoute()
-  .use(async (request, context) => {
-    return { user: { id: 'user-123', role: 'admin' } };
-  })
+const authMiddleware = async ({ request }) => {
+  // Get the token from the request headers
+  const token = request.headers.get('authorization')?.split(' ')[1];
+
+  // Validate the token and get the user
+  const user = await validateToken(token);
+
+  // Return the user to be added to the context
+  return { user };
+};
+
+const permissionsMiddleware = async () => {
+  return { permissions: ['read', 'write'] };
+};
+
+export const GET = createZodRoute()
+  .use(authMiddleware)
+  .use(permissionsMiddleware)
   .handler((request, context) => {
-    const user = context.data.user;
-    return Response.json({ user }, { status: 200 });
+    // Access middleware data from context.data
+    const { user, permissions } = context.data;
+
+    return Response.json({ user, permissions });
   });
 ```
 
-Ensure that the middleware returns an object. The returned object will be merged with the context object.
+Middleware functions should return an object. The returned object will be merged with the context's data property.
 
 ### Custom Error Handler
 
-You can specify a custom error handler function with the `handleServerError` method.
-
-To achieve this, define a custom error handler when creating the `safeRoute`:
-
-- Create a custom error class that extends `Error` and a `safeRoute` instance with a custom error handler:
+You can specify a custom error handler function to handle errors thrown in your route handler:
 
 ```ts
 import { createZodRoute } from 'next-zod-route';
-import { NextResponse } from 'next/server';
 
-export class RouteError extends Error {
-  status?: number;
-  constructor(message: string, status?: number) {
+// Create a custom error class
+class CustomError extends Error {
+  constructor(
+    message: string,
+    public status: number = 400,
+  ) {
     super(message);
-    this.name = 'RouteError';
-    this.message = message;
-    this.status = status || 400;
+    this.name = 'CustomError';
   }
 }
 
-export const safeRoute = createZodRoute({
+// Create a route with a custom error handler
+const safeRoute = createZodRoute({
   handleServerError: (error: Error) => {
-    if (error instanceof RouteError) return NextResponse.json({ message: error.message }, { status: error.status });
+    if (error instanceof CustomError) {
+      return new Response(JSON.stringify({ message: error.message }), { status: error.status });
+    }
 
-    return NextResponse.json({ message: 'Something went wrong' }, { status: 400 });
+    // Default error response
+    return new Response(JSON.stringify({ message: 'Internal server error' }), { status: 500 });
   },
 });
-```
 
-- Use the `handleServerError` method to define a custom error handler.:
-
-```ts
-const GET = safeRoute.handler((request, context) => {
-  // This error will be handled by the custom error handler with a 500 status code
-  throw new RouteError('Test error', 500);
+export const GET = safeRoute.handler((request, context) => {
+  // This error will be caught by the custom error handler
+  throw new CustomError('Something went wrong', 400);
 });
 ```
 
-By default, to avoid any information leakage, the error handler will always return a generic error message.
+By default, if no custom error handler is provided, the library will return a generic "Internal server error" message with a 500 status code to avoid information leakage.
+
+## Validation Errors
+
+When validation fails, the library returns appropriate error responses:
+
+- Invalid params: `{ message: 'Invalid params' }` with status 400
+- Invalid query: `{ message: 'Invalid query' }` with status 400
+- Invalid body: `{ message: 'Invalid body' }` with status 400
 
 ## Tests
 
