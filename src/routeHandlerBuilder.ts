@@ -115,7 +115,9 @@ export class RouteHandlerBuilder<
    * @param handler - The handler function that will be called when the route is hit
    * @returns The original route handler that Next.js expects with the validation logic
    */
-  handler(handler: HandlerFunction<z.infer<TParams>, z.infer<TQuery>, z.infer<TBody>, TContext>): OriginalRouteHandler {
+  handler<TReturn>(
+    handler: HandlerFunction<z.infer<TParams>, z.infer<TQuery>, z.infer<TBody>, TContext, TReturn>,
+  ): OriginalRouteHandler<TReturn> {
     return async (request, context): Promise<Response> => {
       try {
         const url = new URL(request.url);

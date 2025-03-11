@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
 
 import { createZodRoute } from '.';
+import { RouteResult } from './types';
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
@@ -18,6 +19,22 @@ const bodySchema = z.object({
 export const paramsToPromise = (params: Record<string, unknown>): Promise<Record<string, unknown>> => {
   return Promise.resolve(params);
 };
+
+describe('type inference', () => {
+  it('should infer the correct type', async () => {
+    const GET = createZodRoute().handler(() => {
+      return { id: 123 };
+    });
+
+    type Result = RouteResult<typeof GET>;
+    expectTypeOf<Result>().toEqualTypeOf<{ id: number }>();
+
+    const response = await GET(new Request('http://localhost/'), { params: Promise.resolve({}) });
+    const data = (await response.json()) as Result;
+    expectTypeOf<typeof data>().toEqualTypeOf<{ id: number }>();
+    expect(data).toEqual({ id: 123 });
+  });
+});
 
 describe('params validation', () => {
   it('should validate and handle valid params', async () => {
